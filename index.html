@@ -1,0 +1,885 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>温度計キャリブレーション</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', 'Noto Sans JP', sans-serif;
+            background-color: #f4f4f5; /* zinc-100 */
+            color: #18181b; /* zinc-900 */
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        /* モノトーン・フラットデザイン用カスタムレンジスライダー */
+        input[type="range"] {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 100%;
+            height: 6px;
+            background: #e4e4e7; /* zinc-200 */
+            border-radius: 9999px;
+            outline: none;
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            background: #18181b; /* zinc-900 */
+            cursor: pointer;
+            border: 3px solid #ffffff;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+            transition: transform 0.1s ease, background-color 0.15s ease;
+        }
+
+        input[type="range"]::-webkit-slider-thumb:active {
+            transform: scale(1.12);
+            background: #3f3f46; /* zinc-700 */
+        }
+
+        input[type="range"]::-moz-range-thumb {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            background: #18181b;
+            cursor: pointer;
+            border: 3px solid #ffffff;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+        }
+
+        /* 振り切り時のスライダーつまみ強調 */
+        input[type="range"].clamped::-webkit-slider-thumb {
+            background: #71717a; /* zinc-500 */
+            border-color: #e4e4e7;
+        }
+    </style>
+</head>
+<body class="min-h-screen pb-10 select-none">
+
+    <!-- ヘッダー（タイトル＋補間アルゴリズム選択プルダウン） -->
+    <header class="bg-white border-b border-zinc-200 sticky top-0 z-20">
+        <div class="max-w-lg mx-auto px-4 h-14 flex items-center justify-between gap-3">
+            <div class="flex items-center gap-2 min-w-0">
+                <!-- ICOON MONO 調 温度計アイコン -->
+                <svg class="w-5 h-5 text-zinc-800 shrink-0" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M15 13V5c0-1.66-1.34-3-3-3S9 3.34 9 5v8c-1.21.91-2 2.37-2 4 0 2.76 2.24 5 5 5s5-2.24 5-5c0-1.63-.79-3.09-2-4zm-4-8c0-.55.45-1 1-1s1 .45 1 1v3h-2V5z"/>
+                </svg>
+                <h1 class="text-sm sm:text-base font-bold tracking-tight text-zinc-900 truncate">温度計キャリブレーション</h1>
+            </div>
+
+            <!-- 補間アルゴリズム選択メニュー -->
+            <div class="relative shrink-0">
+                <select id="algorithmSelect" onchange="onAlgorithmChange()" aria-label="補間アルゴリズム"
+                    class="appearance-none bg-zinc-100 hover:bg-zinc-200/70 text-zinc-800 text-xs font-semibold pl-3 pr-7 py-2 rounded-lg border border-zinc-300 focus:outline-none focus:border-zinc-500 cursor-pointer transition">
+                    <option value="pchip" selected>PCHIP補間</option>
+                    <option value="linear">線形補間</option>
+                    <option value="ols">最小二乗法</option>
+                </select>
+                <!-- ICOON MONO 調 下矢印アイコン -->
+                <svg class="w-3.5 h-3.5 text-zinc-600 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M7 10l5 5 5-5z"/>
+                </svg>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-lg mx-auto px-4 pt-4 space-y-4">
+
+        <!-- 相互変換カード（連動スライダー＋厳格数値入力） -->
+        <section class="bg-white border border-zinc-200 rounded-xl p-4 sm:p-5 space-y-5">
+            
+            <!-- 指示値（簡易温度計による実測値） -->
+            <div class="space-y-2.5">
+                <div class="flex items-center justify-between">
+                    <label for="indicatedInput" class="text-xs font-bold text-zinc-600 tracking-wider flex items-center gap-1.5">
+                        <span class="w-2 h-2 rounded-full bg-zinc-400 inline-block"></span>
+                        <span>指示値</span>
+                    </label>
+                    <div class="flex items-center gap-1.5">
+                        <div class="flex items-baseline gap-1 bg-zinc-100 border border-zinc-300 focus-within:border-zinc-800 focus-within:bg-white rounded-lg px-3 py-1.5 transition">
+                            <input type="text" id="indicatedInput" inputmode="decimal" placeholder="--.-"
+                                class="w-16 text-right text-xl font-bold text-zinc-900 bg-transparent focus:outline-none tabular-nums"
+                                oninput="handleNumericInput(this, 'indicated')"
+                                onblur="formatOnBlur(this, 'indicated')">
+                            <span class="text-xs font-bold text-zinc-500">℃</span>
+                        </div>
+                        <!-- 0.1℃微調整ボタン（指示値） -->
+                        <div class="flex flex-col gap-0.5">
+                            <button type="button" onclick="stepTemperature('indicated', 0.1)" aria-label="指示値を0.1℃上げる"
+                                class="w-7 h-5 bg-zinc-100 hover:bg-zinc-200 active:bg-zinc-300 border border-zinc-300 rounded-t-md flex items-center justify-center text-zinc-700 transition">
+                                <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M7 14l5-5 5 5z"/>
+                                </svg>
+                            </button>
+                            <button type="button" onclick="stepTemperature('indicated', -0.1)" aria-label="指示値を0.1℃下げる"
+                                class="w-7 h-5 bg-zinc-100 hover:bg-zinc-200 active:bg-zinc-300 border border-zinc-300 rounded-b-md flex items-center justify-center text-zinc-700 transition">
+                                <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M7 10l5 5 5-5z"/>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <div class="pt-1">
+                    <input type="range" id="indicatedSlider" min="70" max="100" step="0.1" value="90.0"
+                        oninput="handleSliderInput('indicated')">
+                    <div class="flex justify-between text-[10px] font-medium text-zinc-400 mt-1 tabular-nums">
+                        <span>70℃</span>
+                        <span>85℃</span>
+                        <span>100℃</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 中央区切り＆相互変換アイコン -->
+            <div class="relative flex items-center justify-center py-0.5">
+                <div class="border-t border-zinc-200 w-full"></div>
+                <div class="bg-zinc-100 border border-zinc-200 text-zinc-600 p-1.5 rounded-full mx-3 shrink-0">
+                    <!-- ICOON MONO 調 上下双方向矢印アイコン -->
+                    <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M16 17.01V10h-2v7.01h-3L15 21l4-3.99h-3zM9 3L5 6.99h3V14h2V6.99h3L9 3z"/>
+                    </svg>
+                </div>
+                <div class="border-t border-zinc-200 w-full"></div>
+            </div>
+
+            <!-- 真値（正確な温度） -->
+            <div class="space-y-2.5">
+                <div class="flex items-center justify-between">
+                    <label for="trueInput" class="text-xs font-bold text-zinc-900 tracking-wider flex items-center gap-1.5">
+                        <span class="w-2 h-2 rounded-full bg-zinc-900 inline-block"></span>
+                        <span>真値</span>
+                    </label>
+                    <div class="flex items-center gap-1.5">
+                        <div class="flex items-baseline gap-1 bg-zinc-900 border border-zinc-900 focus-within:ring-2 focus-within:ring-zinc-400 rounded-lg px-3 py-1.5 transition">
+                            <input type="text" id="trueInput" inputmode="decimal" placeholder="--.-"
+                                class="w-16 text-right text-xl font-bold text-white bg-transparent focus:outline-none tabular-nums"
+                                oninput="handleNumericInput(this, 'true')"
+                                onblur="formatOnBlur(this, 'true')">
+                            <span class="text-xs font-bold text-zinc-400">℃</span>
+                        </div>
+                        <!-- 0.1℃微調整ボタン（真値） -->
+                        <div class="flex flex-col gap-0.5">
+                            <button type="button" onclick="stepTemperature('true', 0.1)" aria-label="真値を0.1℃上げる"
+                                class="w-7 h-5 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 border border-zinc-800 rounded-t-md flex items-center justify-center text-white transition">
+                                <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M7 14l5-5 5 5z"/>
+                                </svg>
+                            </button>
+                            <button type="button" onclick="stepTemperature('true', -0.1)" aria-label="真値を0.1℃下げる"
+                                class="w-7 h-5 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 border border-zinc-800 rounded-b-md flex items-center justify-center text-white transition">
+                                <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M7 10l5 5 5-5z"/>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <div class="pt-1">
+                    <input type="range" id="trueSlider" min="70" max="100" step="0.1" value="87.5"
+                        oninput="handleSliderInput('true')">
+                    <div class="flex justify-between text-[10px] font-medium text-zinc-400 mt-1 tabular-nums">
+                        <span>70℃</span>
+                        <span>85℃</span>
+                        <span>100℃</span>
+                    </div>
+                </div>
+            </div>
+
+        </section>
+
+        <!-- 補間グラフカード -->
+        <section class="bg-white border border-zinc-200 rounded-xl p-4">
+            <div class="flex items-center justify-between mb-2">
+                <div class="flex items-center gap-1.5 text-xs font-bold text-zinc-700">
+                    <!-- ICOON MONO 調 折れ線グラフアイコン -->
+                    <svg class="w-4 h-4 text-zinc-700" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M3.5 18.49l6-6.01 4 4L22 6.92l-1.41-1.41-7.09 7.97-4-4L2 16.99z"/>
+                    </svg>
+                    <span>補間曲線</span>
+                </div>
+                <div class="flex items-center gap-3 text-[10px] font-medium text-zinc-500">
+                    <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-zinc-400 inline-block"></span>計測点</span>
+                    <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-zinc-900 inline-block"></span>現在値</span>
+                </div>
+            </div>
+            <div class="w-full relative aspect-[16/10] bg-zinc-50 rounded-lg border border-zinc-200 overflow-hidden">
+                <canvas id="calibrationChart" class="w-full h-full block"></canvas>
+            </div>
+        </section>
+
+        <!-- 計測データ入力・管理カード -->
+        <section class="bg-white border border-zinc-200 rounded-xl p-4 space-y-3">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center gap-1.5 text-xs font-bold text-zinc-700">
+                    <!-- ICOON MONO 調 リストアイコン -->
+                    <svg class="w-4 h-4 text-zinc-700" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z"/>
+                    </svg>
+                    <span>計測データ</span>
+                </div>
+                <button type="button" onclick="resetData()" class="text-[11px] font-medium text-zinc-500 hover:text-zinc-900 px-2 py-1 rounded hover:bg-zinc-100 transition flex items-center gap-1">
+                    <!-- ICOON MONO 調 リセットアイコン -->
+                    <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+                    </svg>
+                    <span>初期化</span>
+                </button>
+            </div>
+
+            <!-- 新規タプル追加フォーム（数字と小数点のみ許可） -->
+            <div class="grid grid-cols-12 gap-2">
+                <div class="col-span-5 relative">
+                    <input type="text" id="newIndicated" inputmode="decimal" placeholder="指示値"
+                        oninput="sanitizeDecimalInput(this)"
+                        class="w-full bg-zinc-50 border border-zinc-300 rounded-lg pl-3 pr-7 py-2 text-sm font-medium text-zinc-900 focus:outline-none focus:border-zinc-800 focus:bg-white tabular-nums">
+                    <span class="text-xs text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none">℃</span>
+                </div>
+                <div class="col-span-5 relative">
+                    <input type="text" id="newTrue" inputmode="decimal" placeholder="真値"
+                        oninput="sanitizeDecimalInput(this)"
+                        class="w-full bg-zinc-50 border border-zinc-300 rounded-lg pl-3 pr-7 py-2 text-sm font-medium text-zinc-900 focus:outline-none focus:border-zinc-800 focus:bg-white tabular-nums">
+                    <span class="text-xs text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none">℃</span>
+                </div>
+                <button type="button" onclick="addDataPoint()" aria-label="追加"
+                    class="col-span-2 bg-zinc-900 hover:bg-zinc-800 active:scale-95 text-white rounded-lg flex items-center justify-center transition">
+                    <!-- ICOON MONO 調 プラスアイコン -->
+                    <svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+                    </svg>
+                </button>
+            </div>
+
+            <!-- データタプル一覧（直接編集可能） -->
+            <div class="border border-zinc-200 rounded-lg overflow-hidden">
+                <table class="w-full text-left border-collapse text-sm">
+                    <thead>
+                        <tr class="bg-zinc-50 border-b border-zinc-200 text-[11px] font-bold text-zinc-500">
+                            <th class="py-2 px-3">指示値 (℃)</th>
+                            <th class="py-2 px-3">真値 (℃)</th>
+                            <th class="py-2 px-3 text-right">器差</th>
+                            <th class="py-2 px-2 w-10"></th>
+                        </tr>
+                    </thead>
+                    <tbody id="dataTableBody" class="divide-y divide-zinc-100">
+                        <!-- JSで動的に描画 -->
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- フッター（コピーライト） -->
+    <footer class="max-w-lg mx-auto px-4 pt-6 pb-2 text-center">
+        <p class="text-[11px] font-medium text-zinc-400 tracking-wide">
+            &copy; 2026 <a href="https://github.com/risrisbanana" target="_blank" rel="noopener noreferrer" class="hover:text-zinc-700 transition">@risrisbanana</a>
+        </p>
+    </footer>
+
+    <script>
+        // デフォルト計測データ（指示値: indicated, 真値: trueVal）
+        const DEFAULT_DATA = [
+            { indicated: 94.0, trueVal: 92.0 },
+            { indicated: 92.1, trueVal: 90.0 },
+            { indicated: 90.1, trueVal: 88.0 },
+            { indicated: 90.0, trueVal: 87.5 },
+            { indicated: 87.8, trueVal: 85.0 },
+            { indicated: 82.8, trueVal: 82.0 }
+        ];
+
+        const SLIDER_MIN = 70.0;
+        const SLIDER_MAX = 100.0;
+
+        let calibrationData = JSON.parse(localStorage.getItem('thermometer_calib_v3')) || JSON.parse(JSON.stringify(DEFAULT_DATA));
+        let algorithm = 'pchip'; // 'pchip' | 'linear' | 'ols'
+        let model = { points: [], tangents: [], ols: { slope: 1, intercept: 0 } };
+        let activePoint = null; // { indicated, trueVal }
+
+        /**
+         * 小数第一位までの四捨五入
+         */
+        function round1(val) {
+            return Math.round(val * 10) / 10;
+        }
+
+        /**
+         * 数字と小数点のみ許可する入力フィルタ
+         */
+        function sanitizeDecimalInput(el) {
+            let v = el.value.replace(/[^0-9.]/g, '');
+            const parts = v.split('.');
+            if (parts.length > 2) v = parts[0] + '.' + parts.slice(1).join('');
+            el.value = v;
+            return v;
+        }
+
+        /**
+         * スライダー値のクランプ設定（70〜100℃の範囲外は両端に振り切る）
+         */
+        function setSliderClamped(slider, val) {
+            if (val < SLIDER_MIN) {
+                slider.value = SLIDER_MIN;
+                slider.classList.add('clamped');
+            } else if (val > SLIDER_MAX) {
+                slider.value = SLIDER_MAX;
+                slider.classList.add('clamped');
+            } else {
+                slider.value = round1(val);
+                slider.classList.remove('clamped');
+            }
+        }
+
+        /**
+         * 補間モデルの構築（PCHIP接線・最小二乗法回帰係数・データソート）
+         */
+        function buildModel() {
+            const valid = calibrationData
+                .filter(d => !isNaN(d.indicated) && !isNaN(d.trueVal))
+                .sort((a, b) => a.indicated - b.indicated);
+
+            // 同一指示値の重複排除（平均化）
+            const pts = [];
+            for (let i = 0; i < valid.length; i++) {
+                if (pts.length > 0 && Math.abs(pts[pts.length - 1].indicated - valid[i].indicated) < 1e-6) {
+                    pts[pts.length - 1].trueVal = (pts[pts.length - 1].trueVal + valid[i].trueVal) / 2;
+                } else {
+                    pts.push({ indicated: valid[i].indicated, trueVal: valid[i].trueVal });
+                }
+            }
+            model.points = pts;
+
+            const n = pts.length;
+            if (n < 2) {
+                model.tangents = [1];
+                model.ols = { slope: 1, intercept: n === 1 ? pts[0].trueVal - pts[0].indicated : 0 };
+                return;
+            }
+
+            // 最小二乗法（OLS: y = slope * x + intercept）
+            let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
+            for (let i = 0; i < n; i++) {
+                sumX += pts[i].indicated;
+                sumY += pts[i].trueVal;
+                sumXY += pts[i].indicated * pts[i].trueVal;
+                sumXX += pts[i].indicated * pts[i].indicated;
+            }
+            const denom = n * sumXX - sumX * sumX;
+            if (Math.abs(denom) > 1e-9) {
+                const slope = (n * sumXY - sumX * sumY) / denom;
+                const intercept = (sumY - slope * sumX) / n;
+                model.ols = { slope, intercept };
+            } else {
+                model.ols = { slope: 1, intercept: 0 };
+            }
+
+            // PCHIP（単調区分的3次エルミート補間）のFritsch-Carlson接線計算
+            const h = [];
+            const delta = [];
+            for (let i = 0; i < n - 1; i++) {
+                const dx = pts[i + 1].indicated - pts[i].indicated;
+                const dy = pts[i + 1].trueVal - pts[i].trueVal;
+                h.push(dx);
+                delta.push(dy / dx);
+            }
+
+            const m = new Array(n).fill(0);
+            m[0] = delta[0];
+            m[n - 1] = delta[n - 2];
+
+            for (let i = 1; i < n - 1; i++) {
+                if (delta[i - 1] * delta[i] <= 0) {
+                    m[i] = 0;
+                } else {
+                    const w1 = 2 * h[i] + h[i - 1];
+                    const w2 = h[i] + 2 * h[i - 1];
+                    m[i] = (w1 + w2) / (w1 / delta[i - 1] + w2 / delta[i]);
+                }
+            }
+            model.tangents = m;
+        }
+
+        /**
+         * 指示値 (x) から真値 (y) を評価
+         */
+        function evaluateIndicatedToTrue(x) {
+            const pts = model.points;
+            const n = pts.length;
+            if (n === 0) return x;
+            if (n === 1) return x + (pts[0].trueVal - pts[0].indicated);
+
+            if (algorithm === 'ols') {
+                return model.ols.slope * x + model.ols.intercept;
+            }
+
+            // 範囲外は端点の傾きで線形外挿
+            if (x <= pts[0].indicated) {
+                const slope = algorithm === 'pchip'
+                    ? model.tangents[0]
+                    : (pts[1].trueVal - pts[0].trueVal) / (pts[1].indicated - pts[0].indicated);
+                return pts[0].trueVal + slope * (x - pts[0].indicated);
+            }
+            if (x >= pts[n - 1].indicated) {
+                const slope = algorithm === 'pchip'
+                    ? model.tangents[n - 1]
+                    : (pts[n - 1].trueVal - pts[n - 2].trueVal) / (pts[n - 1].indicated - pts[n - 2].indicated);
+                return pts[n - 1].trueVal + slope * (x - pts[n - 1].indicated);
+            }
+
+            // 該当区間探索
+            let i = 0;
+            while (i < n - 2 && x > pts[i + 1].indicated) i++;
+
+            const x0 = pts[i].indicated;
+            const x1 = pts[i + 1].indicated;
+            const y0 = pts[i].trueVal;
+            const y1 = pts[i + 1].trueVal;
+            const h = x1 - x0;
+            const t = (x - x0) / h;
+
+            if (algorithm === 'linear') {
+                return y0 + t * (y1 - y0);
+            }
+
+            // PCHIP 3次エルミート基底関数
+            const m0 = model.tangents[i];
+            const m1 = model.tangents[i + 1];
+            const t2 = t * t;
+            const t3 = t2 * t;
+            const h00 = 2 * t3 - 3 * t2 + 1;
+            const h10 = t3 - 2 * t2 + t;
+            const h01 = -2 * t3 + 3 * t2;
+            const h11 = t3 - t2;
+
+            return h00 * y0 + h10 * h * m0 + h01 * y1 + h11 * h * m1;
+        }
+
+        /**
+         * 真値 (y) から指示値 (x) を逆算（二分法による高速・高精度求解）
+         */
+        function evaluateTrueToIndicated(targetY) {
+            const pts = model.points;
+            const n = pts.length;
+            if (n === 0) return targetY;
+            if (n === 1) return targetY - (pts[0].trueVal - pts[0].indicated);
+
+            if (algorithm === 'ols') {
+                return Math.abs(model.ols.slope) > 1e-9
+                    ? (targetY - model.ols.intercept) / model.ols.slope
+                    : targetY;
+            }
+
+            let low = pts[0].indicated - 40;
+            let high = pts[n - 1].indicated + 40;
+            for (let iter = 0; iter < 50; iter++) {
+                const mid = (low + high) / 2;
+                if (evaluateIndicatedToTrue(mid) < targetY) {
+                    low = mid;
+                } else {
+                    high = mid;
+                }
+            }
+            return (low + high) / 2;
+        }
+
+        /**
+         * 数値入力欄のハンドラ
+         */
+        function handleNumericInput(el, source) {
+            const cleaned = sanitizeDecimalInput(el);
+            const indSlider = document.getElementById('indicatedSlider');
+            const trueSlider = document.getElementById('trueSlider');
+            const indInput = document.getElementById('indicatedInput');
+            const trueInput = document.getElementById('trueInput');
+
+            if (cleaned === '' || cleaned === '.') {
+                if (source === 'indicated') trueInput.value = '';
+                else indInput.value = '';
+                activePoint = null;
+                drawChart();
+                return;
+            }
+
+            const val = parseFloat(cleaned);
+            if (isNaN(val)) return;
+
+            if (source === 'indicated') {
+                const tVal = evaluateIndicatedToTrue(val);
+                trueInput.value = round1(tVal).toFixed(1);
+                setSliderClamped(indSlider, val);
+                setSliderClamped(trueSlider, tVal);
+                activePoint = { indicated: val, trueVal: tVal };
+            } else {
+                const iVal = evaluateTrueToIndicated(val);
+                indInput.value = round1(iVal).toFixed(1);
+                setSliderClamped(trueSlider, val);
+                setSliderClamped(indSlider, iVal);
+                activePoint = { indicated: iVal, trueVal: val };
+            }
+            drawChart();
+        }
+
+        /**
+         * フォーカス喪失時に小数第一位フォーマットへ整形
+         */
+        function formatOnBlur(el, source) {
+            const val = parseFloat(el.value);
+            if (isNaN(val)) return;
+            el.value = round1(val).toFixed(1);
+            handleNumericInput(el, source);
+        }
+
+        /**
+         * 0.1℃単位の微調整ステッパーボタン操作
+         */
+        function stepTemperature(source, delta) {
+            const targetInput = document.getElementById(source === 'indicated' ? 'indicatedInput' : 'trueInput');
+            let current = parseFloat(targetInput.value);
+            if (isNaN(current)) current = 90.0;
+            const next = round1(current + delta);
+            targetInput.value = next.toFixed(1);
+            handleNumericInput(targetInput, source);
+        }
+
+        /**
+         * スライダー操作ハンドラ（片方を動かすと他方も自動スライド＆数値更新）
+         */
+        function handleSliderInput(source) {
+            const indInput = document.getElementById('indicatedInput');
+            const trueInput = document.getElementById('trueInput');
+            const indSlider = document.getElementById('indicatedSlider');
+            const trueSlider = document.getElementById('trueSlider');
+
+            if (source === 'indicated') {
+                const iVal = parseFloat(indSlider.value);
+                indSlider.classList.remove('clamped');
+                const tVal = evaluateIndicatedToTrue(iVal);
+                indInput.value = round1(iVal).toFixed(1);
+                trueInput.value = round1(tVal).toFixed(1);
+                setSliderClamped(trueSlider, tVal);
+                activePoint = { indicated: iVal, trueVal: tVal };
+            } else {
+                const tVal = parseFloat(trueSlider.value);
+                trueSlider.classList.remove('clamped');
+                const iVal = evaluateTrueToIndicated(tVal);
+                trueInput.value = round1(tVal).toFixed(1);
+                indInput.value = round1(iVal).toFixed(1);
+                setSliderClamped(indSlider, iVal);
+                activePoint = { indicated: iVal, trueVal: tVal };
+            }
+            drawChart();
+        }
+
+        /**
+         * 補間アルゴリズム切り替え
+         */
+        function onAlgorithmChange() {
+            algorithm = document.getElementById('algorithmSelect').value;
+            const indInput = document.getElementById('indicatedInput');
+            if (indInput.value !== '' && !isNaN(parseFloat(indInput.value))) {
+                handleNumericInput(indInput, 'indicated');
+            } else {
+                drawChart();
+            }
+        }
+
+        /**
+         * 計測データテーブル描画（セル直接編集対応）
+         */
+        function renderTable() {
+            const tbody = document.getElementById('dataTableBody');
+            tbody.innerHTML = '';
+
+            // 表示は指示値の降順
+            const indexed = calibrationData.map((item, idx) => ({ ...item, idx }));
+            indexed.sort((a, b) => b.indicated - a.indicated);
+
+            indexed.forEach((row) => {
+                const diff = round1(row.indicated - row.trueVal);
+                const diffStr = diff > 0 ? `+${diff.toFixed(1)}` : diff.toFixed(1);
+
+                const tr = document.createElement('tr');
+                tr.className = 'hover:bg-zinc-50 transition';
+                tr.innerHTML = `
+                    <td class="py-1.5 px-2">
+                        <input type="text" inputmode="decimal" value="${row.indicated.toFixed(1)}"
+                            oninput="sanitizeDecimalInput(this); updateRowValue(${row.idx}, 'indicated', this.value)"
+                            onblur="this.value = isNaN(parseFloat(this.value)) ? '' : round1(parseFloat(this.value)).toFixed(1)"
+                            class="w-20 px-2 py-1 text-sm font-semibold text-zinc-800 bg-transparent hover:bg-zinc-100 focus:bg-white border border-transparent focus:border-zinc-400 rounded focus:outline-none tabular-nums">
+                    </td>
+                    <td class="py-1.5 px-2">
+                        <input type="text" inputmode="decimal" value="${row.trueVal.toFixed(1)}"
+                            oninput="sanitizeDecimalInput(this); updateRowValue(${row.idx}, 'trueVal', this.value)"
+                            onblur="this.value = isNaN(parseFloat(this.value)) ? '' : round1(parseFloat(this.value)).toFixed(1)"
+                            class="w-20 px-2 py-1 text-sm font-semibold text-zinc-900 bg-transparent hover:bg-zinc-100 focus:bg-white border border-transparent focus:border-zinc-400 rounded focus:outline-none tabular-nums">
+                    </td>
+                    <td class="py-1.5 px-3 text-right text-xs font-medium text-zinc-500 tabular-nums" id="diff-cell-${row.idx}">
+                        ${diffStr}℃
+                    </td>
+                    <td class="py-1.5 px-2 text-right">
+                        <button type="button" onclick="removeDataPoint(${row.idx})" aria-label="削除"
+                            class="p-1.5 text-zinc-400 hover:text-zinc-800 rounded transition ${calibrationData.length <= 2 ? 'opacity-25 pointer-events-none' : ''}">
+                            <!-- ICOON MONO 調 ゴミ箱アイコン -->
+                            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
+                            </svg>
+                        </button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        /**
+         * テーブル内のセル編集時にリアルタイム反映
+         */
+        function updateRowValue(idx, field, rawVal) {
+            const num = parseFloat(rawVal);
+            if (isNaN(num)) return;
+
+            calibrationData[idx][field] = num;
+            localStorage.setItem('thermometer_calib_v3', JSON.stringify(calibrationData));
+
+            const diffCell = document.getElementById(`diff-cell-${idx}`);
+            if (diffCell) {
+                const diff = round1(calibrationData[idx].indicated - calibrationData[idx].trueVal);
+                diffCell.textContent = (diff > 0 ? `+${diff.toFixed(1)}` : diff.toFixed(1)) + '℃';
+            }
+
+            buildModel();
+            const indInput = document.getElementById('indicatedInput');
+            if (indInput.value !== '' && !isNaN(parseFloat(indInput.value))) {
+                handleNumericInput(indInput, 'indicated');
+            } else {
+                drawChart();
+            }
+        }
+
+        /**
+         * 新規計測データ追加
+         */
+        function addDataPoint() {
+            const indEl = document.getElementById('newIndicated');
+            const trueEl = document.getElementById('newTrue');
+            const iVal = parseFloat(indEl.value);
+            const tVal = parseFloat(trueEl.value);
+
+            if (isNaN(iVal) || isNaN(tVal)) return;
+
+            calibrationData.push({ indicated: round1(iVal), trueVal: round1(tVal) });
+            indEl.value = '';
+            trueEl.value = '';
+            saveAndRefresh();
+        }
+
+        /**
+         * 計測データ削除
+         */
+        function removeDataPoint(idx) {
+            if (calibrationData.length <= 2) return;
+            calibrationData.splice(idx, 1);
+            saveAndRefresh();
+        }
+
+        /**
+         * 初期データ復元
+         */
+        function resetData() {
+            calibrationData = JSON.parse(JSON.stringify(DEFAULT_DATA));
+            saveAndRefresh();
+        }
+
+        /**
+         * 保存・モデル再構築・画面更新
+         */
+        function saveAndRefresh() {
+            localStorage.setItem('thermometer_calib_v3', JSON.stringify(calibrationData));
+            buildModel();
+            renderTable();
+            const indInput = document.getElementById('indicatedInput');
+            if (indInput.value !== '' && !isNaN(parseFloat(indInput.value))) {
+                handleNumericInput(indInput, 'indicated');
+            } else {
+                drawChart();
+            }
+        }
+
+        /**
+         * Canvas補間グラフ描画（モノトーン設計）
+         */
+        function drawChart() {
+            const canvas = document.getElementById('calibrationChart');
+            if (!canvas) return;
+            const dpr = window.devicePixelRatio || 1;
+            const rect = canvas.getBoundingClientRect();
+            if (rect.width === 0 || rect.height === 0) return;
+
+            canvas.width = Math.round(rect.width * dpr);
+            canvas.height = Math.round(rect.height * dpr);
+
+            const ctx = canvas.getContext('2d');
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+            const width = rect.width;
+            const height = rect.height;
+            const pad = { top: 18, right: 20, bottom: 32, left: 40 };
+            const plotW = width - pad.left - pad.right;
+            const plotH = height - pad.top - pad.bottom;
+
+            ctx.clearRect(0, 0, width, height);
+
+            // 表示レンジの動的決定
+            let minVal = 80;
+            let maxVal = 96;
+            calibrationData.forEach(p => {
+                if (!isNaN(p.indicated) && !isNaN(p.trueVal)) {
+                    minVal = Math.min(minVal, Math.floor(p.indicated - 2), Math.floor(p.trueVal - 2));
+                    maxVal = Math.max(maxVal, Math.ceil(p.indicated + 2), Math.ceil(p.trueVal + 2));
+                }
+            });
+            if (activePoint) {
+                minVal = Math.min(minVal, Math.floor(activePoint.indicated - 2), Math.floor(activePoint.trueVal - 2));
+                maxVal = Math.max(maxVal, Math.ceil(activePoint.indicated + 2), Math.ceil(activePoint.trueVal + 2));
+            }
+
+            const toX = (x) => pad.left + ((x - minVal) / (maxVal - minVal)) * plotW;
+            const toY = (y) => pad.top + plotH - ((y - minVal) / (maxVal - minVal)) * plotH;
+
+            // グリッドと目盛り
+            ctx.strokeStyle = '#e4e4e7'; // zinc-200
+            ctx.fillStyle = '#71717a';   // zinc-500
+            ctx.font = '10px Inter, sans-serif';
+            ctx.lineWidth = 1;
+
+            const span = maxVal - minVal;
+            const step = span > 30 ? 10 : (span > 15 ? 5 : 2);
+            const startTick = Math.ceil(minVal / step) * step;
+
+            for (let v = startTick; v <= maxVal; v += step) {
+                const x = toX(v);
+                const y = toY(v);
+
+                ctx.beginPath();
+                ctx.moveTo(x, pad.top);
+                ctx.lineTo(x, pad.top + plotH);
+                ctx.stroke();
+                ctx.fillText(v + '°', x - 8, pad.top + plotH + 13);
+
+                ctx.beginPath();
+                ctx.moveTo(pad.left, y);
+                ctx.lineTo(pad.left + plotW, y);
+                ctx.stroke();
+                ctx.fillText(v + '°', 6, y + 3);
+            }
+
+            // 軸ラベル
+            ctx.fillStyle = '#52525b'; // zinc-600
+            ctx.font = 'bold 10px Noto Sans JP, sans-serif';
+            ctx.fillText('指示値 (℃)', pad.left + plotW / 2 - 22, height - 5);
+
+            ctx.save();
+            ctx.translate(11, pad.top + plotH / 2 + 20);
+            ctx.rotate(-Math.PI / 2);
+            ctx.fillText('真値 (℃)', 0, 0);
+            ctx.restore();
+
+            // 基準対角線 (y = x)
+            ctx.strokeStyle = '#d4d4d8'; // zinc-300
+            ctx.setLineDash([3, 3]);
+            ctx.beginPath();
+            ctx.moveTo(toX(minVal), toY(minVal));
+            ctx.lineTo(toX(maxVal), toY(maxVal));
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // 補間曲線描画
+            const pts = model.points;
+            if (pts.length >= 2) {
+                const dataMin = pts[0].indicated;
+                const dataMax = pts[pts.length - 1].indicated;
+
+                // 外挿区間（薄い破線）
+                ctx.strokeStyle = '#a1a1aa'; // zinc-400
+                ctx.lineWidth = 1.5;
+                ctx.setLineDash([3, 3]);
+                ctx.beginPath();
+                if (minVal < dataMin) {
+                    ctx.moveTo(toX(minVal), toY(evaluateIndicatedToTrue(minVal)));
+                    ctx.lineTo(toX(dataMin), toY(evaluateIndicatedToTrue(dataMin)));
+                }
+                if (maxVal > dataMax) {
+                    ctx.moveTo(toX(dataMax), toY(evaluateIndicatedToTrue(dataMax)));
+                    ctx.lineTo(toX(maxVal), toY(evaluateIndicatedToTrue(maxVal)));
+                }
+                ctx.stroke();
+                ctx.setLineDash([]);
+
+                // 内挿区間（濃色実線）
+                ctx.strokeStyle = '#27272a'; // zinc-800
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                const steps = 160;
+                for (let s = 0; s <= steps; s++) {
+                    const x = dataMin + ((dataMax - dataMin) * s) / steps;
+                    const y = evaluateIndicatedToTrue(x);
+                    if (s === 0) ctx.moveTo(toX(x), toY(y));
+                    else ctx.lineTo(toX(x), toY(y));
+                }
+                ctx.stroke();
+            }
+
+            // 計測データ点（グレー丸＋白縁）
+            pts.forEach(pt => {
+                ctx.fillStyle = '#71717a'; // zinc-500
+                ctx.beginPath();
+                ctx.arc(toX(pt.indicated), toY(pt.trueVal), 4, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 1.5;
+                ctx.stroke();
+            });
+
+            // 現在値ポイント（黒丸＋クロスヘア）
+            if (activePoint) {
+                const cx = toX(activePoint.indicated);
+                const cy = toY(activePoint.trueVal);
+
+                ctx.strokeStyle = 'rgba(24, 24, 27, 0.25)';
+                ctx.lineWidth = 1;
+                ctx.setLineDash([2, 2]);
+                ctx.beginPath();
+                ctx.moveTo(cx, pad.top + plotH);
+                ctx.lineTo(cx, cy);
+                ctx.lineTo(pad.left, cy);
+                ctx.stroke();
+                ctx.setLineDash([]);
+
+                ctx.fillStyle = '#18181b'; // zinc-900
+                ctx.beginPath();
+                ctx.arc(cx, cy, 5.5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+            }
+        }
+
+        // 初期化
+        window.addEventListener('load', () => {
+            buildModel();
+            renderTable();
+            const indInput = document.getElementById('indicatedInput');
+            indInput.value = '90.0';
+            handleNumericInput(indInput, 'indicated');
+        });
+
+        window.addEventListener('resize', drawChart);
+    </script>
+</body>
+</html>
